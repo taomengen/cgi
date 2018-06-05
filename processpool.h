@@ -1,3 +1,11 @@
+/*************************************************
+这是一个半同步/半异步的进程池
+
+(1)主进程监听socket,子进程（工作进程）连接socket
+
+(2)每个子进程能同时处理多个客户连接
+
+*************************************************/
 #ifndef PROCESSPOOL_H
 #define PROCESSPOOL_H
 
@@ -16,77 +24,6 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-
-/*描述一个子进程的类，m_pid是目标子进程的PID，m_pipefd是父进程和子进程通信用的管道 */
-class process
-{
-public:
-	process() : m_pid(-1){}
-public:
-	pid_t m_pid;
-	int m_pipefd[2];
-};
-/*进程池类，将它定义为模板类是为了代码复用，其模板参数是处理逻辑任务的类 */
-template< typename T>
-class processpool
-{
-private:
-	/*将构造函数定位为私有的，因此我们只能通过后面的create静态函数来创建processpool实例 */
-	processpool(int listenfd, int process_number = 8);
-public:
-	/*单体模式，以保证程序最多创建一个processpool实例，这是程序正确处理的信号的必要条件 */
-	static processpool<T>* create(int listenfd, int process_number = 8)
-	{
-		if (!m_instance)
-		{
-			m_instance = new processpool<T> (listenfd, process_number);
-		}
-		return m_instance;
-	}
-	~processpool()
-	{
-		delete [] m_sub_process;
-	}
-	/*启动进程池*/
-	void run();
-private:
-	void setup_sig_pipe();
-	void run_parent();
-	void run_child();
-private:
-	/*进程池允许的最大子进程数量 */
-	static const int MAX_PROCESS_NUMBER = 16;
-
-	/*每个子进程最多能处理的客户数量 */
-	static const int USER_PER_PROCESS = 65535;
-
-	/*epool最多能处理的事件数量  */
-	static const int MAX_EVENT_NUMBER = 10000;
-
-	/*进程池中进程总数 */
-	int m_process_number;
-
-	/*子进程在池中的序号，从0开始 */
-	int m_idx;
-
-	/*每个进程都有一个epool内核事件表，用m_epollfd标识 */
-	int m_epollfd;
-
-	/*监听socket */
-	int m_listenfd;
-
-	/*子进程通过m_stop来决定是都停止运行 */
-	int m_stop;
-
-	/*保存所有子进程的描述信息 */
-	process* m_sub_process;
-
-	/*进程池静态实例 */
-	static processpool<T>* m_instance;
-};
-
-template< typename T>
-processpool<T>* processpool<T>::m_instance = NULL;
 
 /*用于处理信号的管道，以实现统一事件源。后面称之为信号管道*/
 static int sig_pipefd[2];
@@ -136,7 +73,73 @@ static void addsig(int sig, void(handler)(int), bool restart = true)
 	assert(sigaction(sig, &sa, NULL) != -1);
 }
 
-/*进程池构造函数，参数listenfd是监听socket，它必须在创建进程池之前被创建，否则子进程无法直接引用它。*/
+/*描述一个子进程的类，m_pid是目标子进程的PID，m_pipefd是父进程和子进程通信用的管道 */
+class process
+{
+public:
+	process() : m_pid(-1){}
+public:
+	pid_t m_pid;
+	int m_pipefd[2];
+};
+
+/*进程池类，将它定义为模板类是为了代码复用，其模板参数是处理逻辑任务的类cgi_conn */
+template< typename T>
+class processpool
+{
+private:
+	/*单例模式*/
+	/*将构造函数定位为私有的，我们只能通过后面的create静态函数来创建processpool实例 */
+	/*这里是声明，不分配内存*/
+	/*默认参数只能在函数声明中设定一次。如果没有函数声明，才可以在函数定义中设定*/
+	processpool(int listenfd, int process_number = 8);
+public:
+	/*单例模式，实例化接口，保证程序最多创建一个processpool实例，这是程序正确处理的信号的必要条件*/
+	/*这里是声明，不分配内存*/
+	/*默认参数只能在函数声明中设定一次。如果没有函数声明，才可以在函数定义中设定*/
+	static processpool<T>* create(int listenfd, int process_number = 8);
+	/*析构函数*/
+	~processpool();
+	/*启动进程池*/
+	void run();
+private:
+	void setup_sig_pipe();
+	void run_parent();
+	void run_child();
+private:
+	/*进程池允许的最大子进程数量 */
+	static const int MAX_PROCESS_NUMBER = 16;
+
+	/*每个子进程最多能处理的客户数量 */
+	static const int USER_PER_PROCESS = 65535;
+
+	/*epool最多能处理的事件数量  */
+	static const int MAX_EVENT_NUMBER = 10000;
+
+	/*进程池中进程总数 */
+	int m_process_number;
+
+	/*子进程在池中的序号，从0开始 */
+	int m_idx;
+
+	/*每个进程都有一个epool内核事件表，用m_epollfd标识 */
+	int m_epollfd;
+
+	/*监听socket */
+	int m_listenfd;
+
+	/*子进程通过m_stop来决定是都停止运行 */
+	int m_stop;
+
+	/*保存所有子进程的描述信息 */
+	process* m_sub_process;
+
+	/*单例模式，进程池静态实例*/
+	/*这里是声明，不分配内存*/
+	static processpool<T>* m_instance;
+};
+
+/*构造函数，参数listenfd是监听socket，它必须在创建进程池之前被创建，否则子进程无法直接引用它。*/
 /*参数process_number指定进程池中子进程的数量*/
 template< typename T>
 processpool<T>::processpool(int listenfd, int process_number)
@@ -167,6 +170,29 @@ processpool<T>::processpool(int listenfd, int process_number)
 			break;
 		}
 	}
+}
+
+/*单例模式，进程池静态实例，这里是定义，分配内存*/
+template< typename T>
+processpool<T>* processpool<T>::m_instance = NULL;
+
+/*单例模式，实例化接口，保证程序最多创建一个processpool实例，这是程序正确处理的信号的必要条件*/
+/*这里是定义，分配内存*/
+template< typename T>
+processpool<T>* processpool<T>::create(int listenfd, int process_number)
+{
+	if (!m_instance)
+	{
+		m_instance = new processpool<T> (listenfd, process_number);
+	}
+	return m_instance;
+}
+
+/*析构函数*/
+template< typename T>
+processpool<T>::~processpool()
+{
+	delete [] m_sub_process;
 }
 
 /*统一事件源*/
@@ -202,6 +228,7 @@ void processpool<T>::run()
 	run_parent();
 }
 
+/*运行子进程*/
 template<typename T>
 void processpool<T>::run_child()
 {
@@ -312,12 +339,15 @@ void processpool<T>::run_child()
     close(pipefd);
 
     /*我们将这一句注释掉，提醒：应该由m_listenfd的创建者来关闭这个文件描述符。
-    对象由哪个函数创建，就应该由哪个函数销毁*/
-    //close(m_listenfd);
+    对象由哪个函数创建，就应该由哪个函数销毁
+	main函数创建了文件描述符listenfd，那么就由main函数亲自关闭它*/
+	
+	//close(m_listenfd);
 
     close(m_epollfd);
 }
 
+/*运行父进程*/
 template< typename T>
 void processpool<T>::run_parent()
 {
@@ -440,7 +470,10 @@ void processpool<T>::run_parent()
 		}
 	}
 
-	/*由创建者关闭这个文件描述符*/
+	/*我们将这一句注释掉，提醒：应该由m_listenfd的创建者来关闭这个文件描述符。
+    对象由哪个函数创建，就应该由哪个函数销毁
+	main函数创建了文件描述符listenfd，那么就由main函数亲自关闭它*/
+	
 	//close(m_listenfd);
 
 	close(m_epollfd);
